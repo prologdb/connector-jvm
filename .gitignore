@@ -1,0 +1,7 @@
+# Maven
+target/
+*.versionsBackup
+
+# IntelliJ
+.idea
+*.iml

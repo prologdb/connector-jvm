@@ -30,7 +30,7 @@ data class QuerySolutionEvent(
  */
 data class QueryErrorEvent(
     val error: Throwable
-)
+) : QueryEvent()
 
 /**
  * The query has been closed (either by user request or because all solutions have

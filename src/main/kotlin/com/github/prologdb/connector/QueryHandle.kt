@@ -32,7 +32,8 @@ interface QueryHandle {
      * @param doReturn If true, the server will send the solutions back. They will
      * then be available through [events]
      */
-    fun consumeSolutions(amount: Int, closeAfterConsumption: Boolean = false, doReturn: Boolean = true)
+    @Throws(QueryClosedException::class)
+    fun requestSolutions(amount: Int, closeAfterConsumption: Boolean = false, doReturn: Boolean = true)
 
     /**
      * Assures this query is closed client- and server-side. The first invocation
@@ -51,6 +52,11 @@ interface QueryHandle {
 interface QueryEventListener {
     fun onQueryEvent(event: QueryEvent)
 }
+
+/**
+ * Thrown when interacting with [QueryHandle] but the query is already closed.
+ */
+class QueryClosedException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 // a (possibly?) more convenient option for the java users because
 // java does not know that [QueryEvent] is sealed.

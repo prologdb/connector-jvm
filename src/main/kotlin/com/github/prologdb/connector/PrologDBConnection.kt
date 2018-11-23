@@ -1,8 +1,5 @@
 package com.github.prologdb.connector
 
-import java.util.concurrent.LinkedBlockingQueue
-import kotlin.concurrent.thread
-
 /**
  * Connection handle for a connection to a prologdb server, implemented for
  * the JVM.
@@ -12,14 +9,7 @@ import kotlin.concurrent.thread
  * message to the worker. The worker keeps all the state and because
  * there is only one worker thread per connection.
  */
-class PrologDBConnection(
-    val connection: EndpointConnection
-) : AutoCloseable {
-    /**
-     * Set to true when [close] is called for the first time.
-     */
-    @Volatile private var closed: Boolean = false
-
+interface PrologDBConnection : AutoCloseable {
     /**
      * Executes the given instruction. This method will return almost instantly.
      * The query will be asynchronously submitted to the server and initialized there.
@@ -29,38 +19,23 @@ class PrologDBConnection(
      * to also register the first [QueryEventListener] on the handle, thus assuring not
      * to miss any [QueryEvent] regarding the query started by this invocation.
      */
-    fun execute(instruction: PreparedInstruction): QueryHandle {
-        TODO()
-    }
+    @Throws(PrologDBConnectionException::class)
+    fun execute(instruction: PreparedInstruction): QueryHandle
 
-    private val closingMutex = Any()
-    override fun close() {
-        if (closed) return
-        synchronized(closingMutex) {
-            if (closed) return
-            closed = true
-        }
+    /**
+     * Immediately after this method has been invoked, [execute] will refuse to start new queries.
+     * The connection will then be closed.
+     */
+    override fun close() = close(false)
 
-
-    }
-
-    private val messagesToWorker = LinkedBlockingQueue<MessageToWorker>()
-
-    private val worker = thread {
-        TODO()
-    }
-
-    private sealed class MessageToWorker {
-        data class StartInstruction(val instruction: PreparedInstruction): MessageToWorker()
-    }
-
-    private inner class HandleToConnectionImpl(private val queryId: Int) : QueryHandleToConnection {
-        override fun requestSolutions(amount: Int, closeAfterwards: Boolean, doReturn: Boolean) {
-            TODO()
-        }
-
-        override fun closeQuery() {
-            TODO()
-        }
-    }
+    /**
+     * @see close
+     * @param waitForQueriesToComplete If true, blocks until all queries (that were started via [execute] before
+     * this function was invoked) have completed before closing the connection.
+     */
+    fun close(waitForQueriesToComplete: Boolean)
 }
+
+open class PrologDBConnectionException @JvmOverloads constructor(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+
+open class PrologDBConnectionClosedException @JvmOverloads constructor(message: String = "", cause: Throwable? = null) : PrologDBConnectionException(message, cause)

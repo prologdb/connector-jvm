@@ -1,5 +1,7 @@
 package com.github.prologdb.connector
 
+import com.github.prologdb.net.negotiation.SemanticVersion
+import com.github.prologdb.net.negotiation.ServerHello
 import com.github.prologdb.net.v1.messages.Goodbye
 import com.github.prologdb.net.v1.messages.QuerySolutionConsumption
 import com.github.prologdb.net.v1.messages.ToServer
@@ -11,6 +13,12 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
+val PROTOCOL_VERSION1_SEMVER = SemanticVersion.newBuilder()
+    .setMajor(1)
+    .setMinor(0)
+    .setPatch(0)
+    .build()
+
 /**
  * Connection handle for a connection to a prologdb server, implemented for
  * the JVM.
@@ -21,7 +29,12 @@ import kotlin.concurrent.thread
  * there is only one worker thread per connection.
  */
 internal class ProtocolV1PrologDBConnection(
-    val connection: EndpointConnection
+    private val connection: EndpointConnection,
+    /**
+     * The server hello received during the handshake; merely for
+     * informational purposes (does not change any logic)
+     */
+    val serverHello: ServerHello
 ) : PrologDBConnection, AutoCloseable {
     /**
      * Set to true when [close] is called for the first time.

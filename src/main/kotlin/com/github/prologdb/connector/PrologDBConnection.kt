@@ -1,5 +1,9 @@
 package com.github.prologdb.connector
 
+import com.github.prologdb.net.negotiation.ClientHello
+import com.github.prologdb.net.negotiation.ToClient
+import com.github.prologdb.net.negotiation.ToServer
+
 /**
  * Connection handle for a connection to a prologdb server, implemented for
  * the JVM.
@@ -19,7 +23,7 @@ interface PrologDBConnection : AutoCloseable {
      * to also register the first [QueryEventListener] on the handle, thus assuring not
      * to miss any [QueryEvent] regarding the query started by this invocation.
      */
-    @Throws(PrologDBConnectionException::class)
+    @Throws(PrologDBClientException::class)
     fun execute(instruction: PreparedInstruction): QueryHandle
 
     /**
@@ -36,8 +40,47 @@ interface PrologDBConnection : AutoCloseable {
      * will never return.
      */
     fun close(waitForQueriesToComplete: Boolean)
+
+    companion object {
+        @JvmStatic
+        fun connectTo(endpoint: Endpoint): PrologDBConnection {
+            val connection = endpoint.openNewConnection()
+
+            ToServer.newBuilder()
+                .setHello(ClientHello.newBuilder().addDesiredProtocolVersion(PROTOCOL_VERSION1_SEMVER).build())
+                .build()
+                .writeDelimitedTo(connection.outputStream)
+
+            val toClient = ToClient.parseDelimitedFrom(connection.inputStream)
+            if (toClient.error.isInitialized) {
+                val error = PrologDBClientException(toClient.error.message)
+                try {
+                    connection.close()
+                }
+                catch (ex: Throwable) {
+                    error.addSuppressed(error)
+                }
+
+                throw error
+            }
+
+            val serverHello = toClient.hello ?: throw RuntimeException("Server did not send a hello")
+            if (serverHello.chosenProtocolVersion != PROTOCOL_VERSION1_SEMVER) {
+                val ex = PrologDBClientException("Could not negotiate protocol version: server insisted on unsupported version ${serverHello.chosenProtocolVersion}")
+                try {
+                    connection.close()
+                } catch (ex2: Throwable) {
+                    ex.addSuppressed(ex2)
+                }
+
+                throw ex
+            }
+
+            return ProtocolV1PrologDBConnection(connection, serverHello)
+        }
+    }
 }
 
-open class PrologDBConnectionException @JvmOverloads constructor(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
+open class PrologDBClientException @JvmOverloads constructor(message: String, cause: Throwable? = null) : RuntimeException(message, cause)
 
-open class PrologDBConnectionClosedException @JvmOverloads constructor(message: String = "", cause: Throwable? = null) : PrologDBConnectionException(message, cause)
+open class PrologDBConnectionClosedException @JvmOverloads constructor(message: String = "", cause: Throwable? = null) : PrologDBClientException(message, cause)

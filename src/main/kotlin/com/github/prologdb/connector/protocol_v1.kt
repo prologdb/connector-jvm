@@ -16,6 +16,7 @@ import com.google.protobuf.ByteString
 import java.io.DataOutput
 import java.io.DataOutputStream
 import java.lang.UnsupportedOperationException
+import java.nio.channels.AsynchronousByteChannel
 import java.util.*
 import java.util.concurrent.Callable
 import java.util.concurrent.CompletableFuture
@@ -41,10 +42,9 @@ val PROTOCOL_VERSION1_SEMVER = SemanticVersion.newBuilder()
  * there is only one worker thread per connection.
  */
 internal class ProtocolV1PrologDBConnection(
-    private val endpoint: Endpoint
+    private val connectionChannel: AsynchronousByteChannel
 ) : PrologDBConnection, AutoCloseable {
 
-    private val connectionChannel = endpoint.openNewConnection()
     private val outQueue = AsyncChannelProtobufOutgoingQueue(connectionChannel)
     private val inReader = AsyncByteChannelDelimitedProtobufReader(
             ToClient::class.java,

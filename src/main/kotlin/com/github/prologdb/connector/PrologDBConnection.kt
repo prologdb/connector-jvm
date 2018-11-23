@@ -1,17 +1,17 @@
 package com.github.prologdb.connector
 
+import com.github.prologdb.net.async.readSingleDelimited
+import com.github.prologdb.net.async.writeDelimitedTo
 import com.github.prologdb.net.negotiation.ClientHello
 import com.github.prologdb.net.negotiation.ToClient
 import com.github.prologdb.net.negotiation.ToServer
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.Future
 
 /**
- * Connection handle for a connection to a prologdb server, implemented for
- * the JVM.
+ * Connection handle for a connection to a prologdb server.
  *
- * This class is **THREAD SAFE**. This is achieved by having a separate
- * worker thread. All methods invoked on the connection object send a
- * message to the worker. The worker keeps all the state and because
- * there is only one worker thread per connection.
+ * **Implementations MUST BE thread-safe!**
  */
 interface PrologDBConnection : AutoCloseable {
     /**
@@ -43,40 +43,43 @@ interface PrologDBConnection : AutoCloseable {
 
     companion object {
         @JvmStatic
-        fun connectTo(endpoint: Endpoint): PrologDBConnection {
+        fun connectTo(endpoint: Endpoint): Future<out PrologDBConnection> {
             val connection = endpoint.openNewConnection()
 
             ToServer.newBuilder()
                 .setHello(ClientHello.newBuilder().addDesiredProtocolVersion(PROTOCOL_VERSION1_SEMVER).build())
                 .build()
-                .writeDelimitedTo(connection.outputStream)
+                .writeDelimitedTo(connection)
 
-            val toClient = ToClient.parseDelimitedFrom(connection.inputStream)
-            if (toClient.error.isInitialized) {
-                val error = PrologDBClientException(toClient.error.message)
-                try {
-                    connection.close()
+            return connection.readSingleDelimited(ToClient::class.java)
+                .thenApply { toClient ->
+                    if (toClient.error.isInitialized) {
+                        val error = PrologDBClientException(toClient.error.message)
+                        try {
+                            connection.close()
+                        }
+                        catch (ex: Throwable) {
+                            error.addSuppressed(error)
+                        }
+
+                        throw error
+                    }
+
+                    val serverHello = toClient.hello ?: throw RuntimeException("Server did not send a hello")
+                    if (serverHello.chosenProtocolVersion != PROTOCOL_VERSION1_SEMVER) {
+                        val ex = PrologDBClientException("Could not negotiate protocol version: server insisted on unsupported version ${serverHello.chosenProtocolVersion}")
+                        try {
+                            connection.close()
+                        } catch (ex2: Throwable) {
+                            ex.addSuppressed(ex2)
+                        }
+
+                        throw ex
+                    }
+
+                    ProtocolV1PrologDBConnection(connection)
                 }
-                catch (ex: Throwable) {
-                    error.addSuppressed(error)
-                }
-
-                throw error
-            }
-
-            val serverHello = toClient.hello ?: throw RuntimeException("Server did not send a hello")
-            if (serverHello.chosenProtocolVersion != PROTOCOL_VERSION1_SEMVER) {
-                val ex = PrologDBClientException("Could not negotiate protocol version: server insisted on unsupported version ${serverHello.chosenProtocolVersion}")
-                try {
-                    connection.close()
-                } catch (ex2: Throwable) {
-                    ex.addSuppressed(ex2)
-                }
-
-                throw ex
-            }
-
-            return ProtocolV1PrologDBConnection(connection, serverHello)
+                .toCompletableFuture()
         }
     }
 }

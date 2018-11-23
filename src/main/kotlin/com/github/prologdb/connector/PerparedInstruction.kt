@@ -12,6 +12,8 @@ data class PreparedInstruction(
 ) {
     private val instantiationsMap = mutableMapOf<String, PrologTerm>()
 
+    val instantiations: Map<String, PrologTerm> = instantiationsMap
+
     /**
      * Instantiates the variable with the given name to the given value in the
      * [instruction] (parsing and replacement will be done server-side).

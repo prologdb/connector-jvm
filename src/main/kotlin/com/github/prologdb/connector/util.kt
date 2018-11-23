@@ -1,10 +1,10 @@
 package com.github.prologdb.connector
 
-import java.util.concurrent.CancellationException
-import java.util.concurrent.CompletableFuture
-import java.util.concurrent.ExecutionException
-import java.util.concurrent.Future
+import java.util.concurrent.*
 
+/**
+ * Like [Thread.sleep] **but cannot be interrupted**.
+ */
 fun sleepUninterruptibly(millis: Long) {
     val endAt = System.currentTimeMillis() + millis
 
@@ -19,6 +19,10 @@ fun sleepUninterruptibly(millis: Long) {
     } while (remaining > 0)
 }
 
+/**
+ * Like calling [Future.get] without using the return value **but
+ * cannot be interrupted**.
+ */
 fun <T> Future<T>.joinUninterruptibly() {
     if (this is CompletableFuture) this.join() else {
         while (!this.isDone) {
@@ -30,5 +34,17 @@ fun <T> Future<T>.joinUninterruptibly() {
                 catch (ignore: CancellationException) {}
             } catch(ignore: InterruptedException) {}
         }
+    }
+}
+
+/**
+ * Like [BlockingQueue.take] **but cannot be interrupted.**
+ */
+fun <T> BlockingQueue<T>.takeUninterruptibly(): T {
+    while (true) {
+        try {
+            return take()
+        }
+        catch (ex: InterruptedException) {}
     }
 }

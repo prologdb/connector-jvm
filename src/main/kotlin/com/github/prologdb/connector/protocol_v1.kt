@@ -1,16 +1,28 @@
 package com.github.prologdb.connector
 
+import com.github.prologdb.io.binaryprolog.BinaryPrologReader
+import com.github.prologdb.io.binaryprolog.BinaryPrologWriter
+import com.github.prologdb.io.util.ByteArrayOutputStream
+import com.github.prologdb.io.util.Pool
+import com.github.prologdb.net.async.AsyncByteChannelDelimitedProtobufReader
+import com.github.prologdb.net.async.AsyncChannelProtobufOutgoingQueue
 import com.github.prologdb.net.negotiation.SemanticVersion
 import com.github.prologdb.net.negotiation.ServerHello
-import com.github.prologdb.net.v1.messages.Goodbye
-import com.github.prologdb.net.v1.messages.QuerySolutionConsumption
-import com.github.prologdb.net.v1.messages.ToServer
+import com.github.prologdb.net.v1.messages.*
+import com.github.prologdb.runtime.term.Variable
+import com.github.prologdb.runtime.unification.Unification
+import com.github.prologdb.runtime.unification.VariableBucket
+import com.google.protobuf.ByteString
+import java.io.DataOutput
+import java.io.DataOutputStream
+import java.lang.UnsupportedOperationException
 import java.util.*
+import java.util.concurrent.Callable
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Future
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.function.Consumer
 import kotlin.concurrent.thread
 
 val PROTOCOL_VERSION1_SEMVER = SemanticVersion.newBuilder()
@@ -29,13 +41,19 @@ val PROTOCOL_VERSION1_SEMVER = SemanticVersion.newBuilder()
  * there is only one worker thread per connection.
  */
 internal class ProtocolV1PrologDBConnection(
-    private val connection: EndpointConnection,
-    /**
-     * The server hello received during the handshake; merely for
-     * informational purposes (does not change any logic)
-     */
-    val serverHello: ServerHello
+    private val endpoint: Endpoint
 ) : PrologDBConnection, AutoCloseable {
+
+    private val connectionChannel = endpoint.openNewConnection()
+    private val outQueue = AsyncChannelProtobufOutgoingQueue(connectionChannel)
+    private val inReader = AsyncByteChannelDelimitedProtobufReader(
+            ToClient::class.java,
+            connectionChannel,
+            Consumer { onNewMessageFromServer(it) },
+            Consumer { onServerReadError(it) },
+            Callable<Unit> { onEndpointConnectionClosed() }
+        )
+
     /**
      * Set to true when [close] is called for the first time.
      */
@@ -62,9 +80,115 @@ internal class ProtocolV1PrologDBConnection(
 
         // query handle registered successfully
 
-        messagesToWorker.put(MessageToWorker.StartInstruction(instruction))
+        messagesToWorker.put(MessageToWorker.StartInstruction(instruction, queryId))
 
         return handle
+    }
+
+    private val messagesToWorker = LinkedBlockingQueue<MessageToWorker>()
+
+    private val worker = object {
+
+        /**
+         * Completes when the worker thread quits; completes exceptionally if
+         * the worker thread errors unexpectedly.
+         */
+        val onStopped = CompletableFuture<Unit>()
+
+        private val thread = thread {
+            try {
+                doTasks@while (true) {
+                    val nextTask = messagesToWorker.takeUninterruptibly()
+                    when (nextTask) {
+                        is MessageToWorker.StartInstruction -> startInstruction(nextTask)
+                        is MessageToWorker.RequestSolutions -> requestSolutions(nextTask)
+                        is MessageToWorker.CloseQuery       -> closeQuery(nextTask)
+                        is MessageToWorker.TerminateWorker  -> break@doTasks
+                    }
+                }
+
+                onStopped.complete(Unit)
+            }
+            catch (ex: Throwable) {
+                onStopped.completeExceptionally(ex)
+            }
+        }
+
+        private fun startInstruction(msg: MessageToWorker.StartInstruction) {
+            val initQueryProto = QueryInitialization.newBuilder()
+                .setQueryId(msg.queryId)
+                .setKind(msg.instruction.mode.toProtocol())
+                .setInstruction(msg.instruction.instruction.toProtocol())
+
+            for ((varName, value) in msg.instruction.instantiations) {
+                initQueryProto.putInstantiations(varName, value.toProtocol())
+            }
+
+            msg.instruction.totalLimit?.let { initQueryProto.setLimit(it) }
+
+            outQueue.queue(
+                ToServer.newBuilder()
+                    .setInitQuery(initQueryProto.build())
+                .build()
+            )
+        }
+
+        private fun requestSolutions(msg: MessageToWorker.RequestSolutions) {
+            outQueue.queue(msg.request)
+        }
+
+        private fun closeQuery(msg: MessageToWorker.CloseQuery) {
+            outQueue.queue(
+                ToServer.newBuilder()
+                    .setConsumeResults(
+                        QuerySolutionConsumption.newBuilder()
+                            .setQueryId(msg.queryId)
+                            .setAmount(0)
+                            .setCloseAfterwards(true)
+                            .setHandling(QuerySolutionConsumption.PostConsumptionAction.DISCARD)
+                        .build()
+                    )
+                .build()
+            )
+        }
+    }
+
+    private fun onNewMessageFromServer(message: ToClient) {
+        when (message.eventCase) {
+            ToClient.EventCase.QUERY_OPENED -> {
+                val queryId = message.queryOpened!!.queryId
+                currentlyOpenQueries[queryId]?.onEvent(QueryInitializedEvent())
+            }
+            ToClient.EventCase.QUERY_CLOSED -> {
+                val queryId = message.queryClosed!!.queryId
+                currentlyOpenQueries[queryId]?.onEvent(QueryClosedEvent())
+            }
+            ToClient.EventCase.SOLUTION -> {
+                val queryId = message.solution!!.queryId
+                currentlyOpenQueries[queryId]?.onEvent(QuerySolutionEvent(message.solution!!.toRuntimeUnification()))
+            }
+            ToClient.EventCase.QUERY_ERROR -> {
+                val queryId = message.queryError!!.queryId
+                val error = message.queryError!!.toThrowable()
+                currentlyOpenQueries[queryId]?.onEvent(QueryErrorEvent(error))
+            }
+            ToClient.EventCase.SERVER_ERROR -> TODO()
+            ToClient.EventCase.GOODBYE -> TODO()
+            ToClient.EventCase.EVENT_NOT_SET -> TODO()
+        }
+    }
+
+    private fun onServerReadError(error: Throwable) {
+        TODO()
+    }
+
+    private fun onEndpointConnectionClosed() {
+        if (closed) {
+            // all perfectly fine
+            return
+        }
+
+        TODO()
     }
 
     private val closingMutex = Any()
@@ -92,8 +216,14 @@ internal class ProtocolV1PrologDBConnection(
             allQueriesDone.join()
         }
 
+        // any messages to the worker between closed = true and this point are arguably not important to keep
+        // the worker must receive the terminate message in order to terminate cleanly
+        // to speed that up, the messages are cleared.
+        messagesToWorker.clear()
+        messagesToWorker.put(MessageToWorker.TerminateWorker())
+
         // wait for the worker to stop using the network connection
-        worker.stop().joinUninterruptibly()
+        worker.onStopped.joinUninterruptibly()
 
         if (!waitForQueriesToComplete) {
             // close the queries now!
@@ -102,56 +232,36 @@ internal class ProtocolV1PrologDBConnection(
                 .forEach { (queryId, handle) ->
                     handle.onEvent(QueryClosedEvent())
 
-                    ToServer.newBuilder()
-                        .setConsumeResults(QuerySolutionConsumption.newBuilder()
-                            .setQueryId(queryId)
-                            .setHandling(QuerySolutionConsumption.PostConsumptionAction.DISCARD)
-                            .setCloseAfterwards(true)
-                            .setAmount(0)
+                    outQueue.queue(
+                        ToServer.newBuilder()
+                            .setConsumeResults(QuerySolutionConsumption.newBuilder()
+                                .setQueryId(queryId)
+                                .setHandling(QuerySolutionConsumption.PostConsumptionAction.DISCARD)
+                                .setCloseAfterwards(true)
+                                .setAmount(0)
+                                .build()
+                            )
                             .build()
-                        )
-                        .build()
-                        .writeDelimitedTo(connection.outputStream)
+                    )
                 }
         }
 
-        ToServer.newBuilder()
-            .setGoodbye(Goodbye.getDefaultInstance())
-            .build()
-            .writeDelimitedTo(connection.outputStream)
-
-        connection.close()
-    }
-
-    private val messagesToWorker = LinkedBlockingQueue<MessageToWorker>()
-
-    private val worker = object {
-
-        private @Volatile var shouldStop = false
-
-        private val onStopped = CompletableFuture<Unit>()
-
-        fun stop(): Future<Unit> {
-            shouldStop = true
-            return onStopped
-        }
-
-        private val thread = thread {
-            try {
-                TODO()
-
-                onStopped.complete(Unit)
-            }
-            catch (ex: Throwable) {
-                onStopped.completeExceptionally(ex)
-            }
-        }
+        outQueue.queue(
+            ToServer.newBuilder()
+                .setGoodbye(Goodbye.getDefaultInstance())
+                .build()
+        ).joinUninterruptibly()
     }
 
     private sealed class MessageToWorker {
-        data class StartInstruction(val instruction: PreparedInstruction): MessageToWorker()
+        data class StartInstruction(val instruction: PreparedInstruction, val queryId: Int): MessageToWorker()
         data class RequestSolutions(val request: QuerySolutionConsumption): MessageToWorker()
         data class CloseQuery(val queryId: Int): MessageToWorker()
+        class TerminateWorker: MessageToWorker() {
+            override fun equals(other: Any?): Boolean = other != null && other::class.java == TerminateWorker::class.java
+
+            override fun hashCode() = 0
+        }
     }
 
     inner class QueryHandleToConnectionTalkback(private val queryId: Int) {
@@ -228,4 +338,74 @@ private class QueryHandleImpl(
 
         talkback.requestSolutions(amount, closeAfterConsumption, doReturn)
     }
+}
+
+private val defaultBinaryReader = BinaryPrologReader.getDefaultInstance()
+private val defaultBinaryWriter = BinaryPrologWriter.getDefaultInstance()
+
+private fun InstructionMode.toProtocol(): QueryInitialization.Kind = when (this) {
+    InstructionMode.QUERY     -> QueryInitialization.Kind.QUERY
+    InstructionMode.DIRECTIVE -> QueryInitialization.Kind.DIRECTIVE
+}
+
+private val bufferPool = Pool<Pair<ByteArrayOutputStream, DataOutput>>(2, {
+    val stream = ByteArrayOutputStream(2048)
+    Pair(stream, DataOutputStream(stream))
+})
+
+private fun PrologQuery.toProtocol(): Query {
+    return if (this.codeIsProlog) {
+        Query.newBuilder()
+            .setType(Query.Type.STRING)
+            .setData(ByteString.copyFrom(this.prologSource!!, Charsets.UTF_8))
+            .build()
+    } else {
+        val binary = bufferPool.using { (bufferStream, dataOutput) ->
+            defaultBinaryWriter.writeQueryTo(this.ast!!, dataOutput)
+            ByteString.copyFrom(bufferStream.bufferOfData)
+        }
+
+        Query.newBuilder()
+            .setType(Query.Type.BINARY)
+            .setData(binary)
+            .build()
+    }
+}
+
+private fun PrologTerm.toProtocol(): Term {
+    return if (this.codeIsProlog) {
+        Term.newBuilder()
+            .setType(Term.Type.STRING)
+            .setData(ByteString.copyFrom(prologSource!!, Charsets.UTF_8))
+            .build()
+    } else {
+        val binary = bufferPool.using { (bufferStream, dataOutput) ->
+            defaultBinaryWriter.writeTermTo(this.ast!!, dataOutput)
+            ByteString.copyFrom(bufferStream.bufferOfData)
+        }
+
+        Term.newBuilder()
+            .setType(Term.Type.BINARY)
+            .setData(binary)
+            .build()
+    }
+}
+
+private fun QuerySolution.toRuntimeUnification(): Unification {
+    val bucket = VariableBucket()
+    for ((varName, protocolValue) in instantiationsMap) {
+        bucket.instantiate(Variable(varName), protocolValue.toRuntime())
+    }
+
+    return Unification(bucket)
+}
+
+private fun Term.toRuntime(): com.github.prologdb.runtime.term.Term {
+    if (type != Term.Type.BINARY) throw UnsupportedOperationException()
+
+    return defaultBinaryReader.readTermFrom(data.asReadOnlyByteBuffer())
+}
+
+private fun QueryRelatedError.toThrowable(): Throwable {
+    return PrologDBClientException(this.shortMessage, null)
 }

@@ -48,8 +48,15 @@ interface QueryHandle {
  * [QueryHandle.addListener].
  *
  * Java users might want to use [AbstractQueryEventListener].
+ *
+ * The methods of these listeners are invoked from global event dispatcher threads;
+ * the methods can block I/O and processing of newly arrived data. These methods should do
+ * as few work as possible if a high throughput to the server is important.
  */
 interface QueryEventListener {
+    /**
+     * Called when a new event regarding a query is available.
+     */
     fun onQueryEvent(event: QueryEvent)
 }
 
@@ -60,6 +67,11 @@ class QueryClosedException(message: String, cause: Throwable? = null) : Exceptio
 
 // a (possibly?) more convenient option for the java users because
 // java does not know that [QueryEvent] is sealed.
+/**
+ * The methods of these listeners are invoked from global event dispatcher threads;
+ * the methods can block I/O and processing of newly arrived data. These methods should do
+ * as few work as possible if a high throughput to the server is important.
+ */
 abstract class AbstractQueryEventListener : QueryEventListener {
     final override fun onQueryEvent(event: QueryEvent) {
         return when (event) {

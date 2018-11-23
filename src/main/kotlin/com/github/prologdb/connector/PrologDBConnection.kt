@@ -31,7 +31,9 @@ interface PrologDBConnection : AutoCloseable {
     /**
      * @see close
      * @param waitForQueriesToComplete If true, blocks until all queries (that were started via [execute] before
-     * this function was invoked) have completed before closing the connection.
+     * this function was invoked) have completed before closing the connection. **Use this with caution!** If the queries
+     * are not closed or depleted via [QueryHandle.requestSolutions], they will remain open forever and this method
+     * will never return.
      */
     fun close(waitForQueriesToComplete: Boolean)
 }

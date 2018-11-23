@@ -7,7 +7,6 @@ import com.github.prologdb.io.util.Pool
 import com.github.prologdb.net.async.AsyncByteChannelDelimitedProtobufReader
 import com.github.prologdb.net.async.AsyncChannelProtobufOutgoingQueue
 import com.github.prologdb.net.negotiation.SemanticVersion
-import com.github.prologdb.net.negotiation.ServerHello
 import com.github.prologdb.net.v1.messages.*
 import com.github.prologdb.runtime.term.Variable
 import com.github.prologdb.runtime.unification.Unification
@@ -22,6 +21,7 @@ import java.util.concurrent.Callable
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.function.Consumer
 import kotlin.concurrent.thread
@@ -290,6 +290,9 @@ private class QueryHandleImpl(
 
     private val listeners: MutableSet<QueryEventListener> = Collections.newSetFromMap(ConcurrentHashMap())
 
+    private var firstListenerRegistered = AtomicBoolean(false)
+    private val firstListenerQueue = ArrayDeque<QueryEvent>()
+
     /**
      * Set to true when
      * * a close event is received
@@ -311,7 +314,15 @@ private class QueryHandleImpl(
             closed = true
         }
 
-        listeners.forEach { it.onQueryEvent(event) }
+        if (!firstListenerRegistered.get()) {
+            synchronized(firstListenerQueue) {
+                if (!firstListenerRegistered.get()) {
+                    firstListenerQueue.add(event)
+                }
+            }
+        } else {
+            listeners.forEach { it.onQueryEvent(event) }
+        }
     }
 
     private val closingMutex = Any()
@@ -326,6 +337,13 @@ private class QueryHandleImpl(
     }
 
     override fun addListener(l: QueryEventListener) {
+        if (firstListenerRegistered.compareAndSet(false, true)) {
+            synchronized(firstListenerQueue) {
+                firstListenerQueue.forEach(l::onQueryEvent)
+                firstListenerQueue.clear()
+            }
+        }
+
         listeners.add(l)
     }
 

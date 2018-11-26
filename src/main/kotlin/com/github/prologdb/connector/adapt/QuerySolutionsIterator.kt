@@ -69,13 +69,13 @@ internal class QuerySolutionsIterator private constructor(
             processNextEvent()
         }
 
-        return solutionQueue.isNotEmpty()
+        return solutionQueue.isNotEmpty() || error != null
     }
 
     override fun next(): Unification {
         if (!hasNext()) throw NoSuchElementException()
 
-        return solutionQueue.poll() ?: throw RuntimeException("Internal error")
+        return solutionQueue.poll() ?: throw fixStackTrace(error ?: throw RuntimeException("Internal error"))
     }
 
     companion object {

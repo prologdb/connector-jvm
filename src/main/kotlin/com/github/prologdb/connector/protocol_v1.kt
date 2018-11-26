@@ -176,7 +176,7 @@ internal class ProtocolV1PrologDBConnection(
                 currentlyOpenQueries[queryId]?.onEvent(QueryErrorEvent(error))
             }
             ToClient.EventCase.SERVER_ERROR -> println(message)
-            ToClient.EventCase.GOODBYE -> TODO()
+            ToClient.EventCase.GOODBYE -> if (!closed) close(false)
             ToClient.EventCase.EVENT_NOT_SET -> TODO()
         }
     }

@@ -14,7 +14,6 @@ import com.github.prologdb.runtime.unification.VariableBucket
 import com.google.protobuf.ByteString
 import java.io.DataOutput
 import java.io.DataOutputStream
-import java.lang.UnsupportedOperationException
 import java.nio.channels.AsynchronousByteChannel
 import java.util.*
 import java.util.concurrent.Callable
@@ -134,7 +133,10 @@ internal class ProtocolV1PrologDBConnection(
         }
 
         private fun requestSolutions(msg: MessageToWorker.RequestSolutions) {
-            outQueue.queue(msg.request)
+            outQueue.queue(ToServer.newBuilder()
+                .setConsumeResults(msg.request)
+                .build()
+            )
         }
 
         private fun closeQuery(msg: MessageToWorker.CloseQuery) {
@@ -162,6 +164,7 @@ internal class ProtocolV1PrologDBConnection(
             ToClient.EventCase.QUERY_CLOSED -> {
                 val queryId = message.queryClosed!!.queryId
                 currentlyOpenQueries[queryId]?.onEvent(QueryClosedEvent())
+                currentlyOpenQueries.remove(queryId)
             }
             ToClient.EventCase.SOLUTION -> {
                 val queryId = message.solution!!.queryId
@@ -172,13 +175,14 @@ internal class ProtocolV1PrologDBConnection(
                 val error = message.queryError!!.toThrowable()
                 currentlyOpenQueries[queryId]?.onEvent(QueryErrorEvent(error))
             }
-            ToClient.EventCase.SERVER_ERROR -> TODO()
+            ToClient.EventCase.SERVER_ERROR -> println(message)
             ToClient.EventCase.GOODBYE -> TODO()
             ToClient.EventCase.EVENT_NOT_SET -> TODO()
         }
     }
 
     private fun onServerReadError(error: Throwable) {
+        error.printStackTrace()
         TODO()
     }
 

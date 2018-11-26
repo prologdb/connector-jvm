@@ -17,6 +17,13 @@ interface QueryHandle {
     fun addListener(l: QueryEventListener)
 
     /**
+     * Like [addListener], convenience for kotlin users
+     */
+    fun addListener(l: (QueryEvent) -> Unit) = addListener(object : QueryEventListener {
+        override fun onQueryEvent(event: QueryEvent) = l(event)
+    })
+
+    /**
      * When this method returns it is guaranteed that the given listener will
      * not be notified about any more events (unless it is passed to [addListener]
      * afterwards).

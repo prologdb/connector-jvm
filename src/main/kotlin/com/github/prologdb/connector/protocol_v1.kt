@@ -282,6 +282,16 @@ internal class ProtocolV1PrologDBConnection(
             ))
         }
 
+        fun requestAllRemainingSolutions(doReturn: Boolean) {
+            messagesToWorker.put(MessageToWorker.RequestSolutions(QuerySolutionConsumption.newBuilder()
+                .setQueryId(queryId)
+                .setCloseAfterwards(true)
+                .setHandling(if (doReturn) QuerySolutionConsumption.PostConsumptionAction.RETURN else QuerySolutionConsumption.PostConsumptionAction.DISCARD)
+                .clearAmount()
+                .build()
+            ))
+        }
+
         fun closeQuery() {
             messagesToWorker.put(MessageToWorker.CloseQuery(queryId))
         }
@@ -359,6 +369,12 @@ private class QueryHandleImpl(
         if (closed) throw QueryClosedException("This query is already closed.")
 
         talkback.requestSolutions(amount, closeAfterConsumption, doReturn)
+    }
+
+    override fun requestAllRemainingSolutions(doReturn: Boolean) {
+        if (closed) throw QueryClosedException("This query is already closed.")
+
+        talkback.requestAllRemainingSolutions(doReturn)
     }
 }
 

@@ -17,6 +17,13 @@ interface QueryHandle {
     fun addListener(l: QueryEventListener)
 
     /**
+     * Like [addListener], convenience for kotlin users
+     */
+    fun addListener(l: (QueryEvent) -> Unit) = addListener(object : QueryEventListener {
+        override fun onQueryEvent(event: QueryEvent) = l(event)
+    })
+
+    /**
      * When this method returns it is guaranteed that the given listener will
      * not be notified about any more events (unless it is passed to [addListener]
      * afterwards).
@@ -25,15 +32,26 @@ interface QueryHandle {
 
     /**
      * Instructs the server to calculate `amount` additional solutions. The order in
-     * which this method is invoked is also the order in which the server will handle
-     * the solutions.
+     * which this method (or [requestAllRemainingSolutions]) is invoked is also the
+     * order in which the server will handle the requests.
      * @param closeAfterConsumption If true, the query will be closed after this request
      * for solutions has been completed.
-     * @param doReturn If true, the server will send the solutions back. They will
-     * then be available through [events]
+     * @param doReturn If true, the server will send the solutions back. They will be
+     * available as [QuerySolutionEvent]s passed to the registered [QueryEventListener]s.
      */
     @Throws(QueryClosedException::class)
     fun requestSolutions(amount: Int, closeAfterConsumption: Boolean = false, doReturn: Boolean = true)
+
+    /**
+     * Instructs the server to calculate all remaining solutions and close the query
+     * afterwards.
+     * @param doReturn If true, the server will send the solutions back. They will be
+     * available as [QuerySolutionEvent]s passed to the registered [QueryEventListener]s.
+     * Setting this to `false` is useful when the user only cares about the side-effects of
+     * the query.
+     */
+    @Throws(QueryClosedException::class)
+    fun requestAllRemainingSolutions(doReturn: Boolean)
 
     /**
      * Assures this query is closed client- and server-side. The first invocation

@@ -18,7 +18,7 @@ data class DirectEndpoint(
 ) : Endpoint {
     override fun openNewConnection(): AsynchronousByteChannel {
         val channel = AsynchronousSocketChannel.open()
-        channel.connect(address)
+        channel.connect(address).get()
         return channel
     }
 }

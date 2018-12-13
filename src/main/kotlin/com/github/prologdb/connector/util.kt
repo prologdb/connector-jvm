@@ -1,6 +1,9 @@
 package com.github.prologdb.connector
 
-import java.util.concurrent.*
+import java.util.concurrent.BlockingQueue
+import java.util.concurrent.CancellationException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.Future
 
 /**
  * Like [Thread.sleep] **but cannot be interrupted**.
@@ -24,16 +27,14 @@ fun sleepUninterruptibly(millis: Long) {
  * cannot be interrupted**.
  */
 fun <T> Future<T>.joinUninterruptibly() {
-    if (this is CompletableFuture) this.join() else {
-        while (!this.isDone) {
+    while (!this.isDone) {
+        try {
             try {
-                try {
-                    this.get()
-                }
-                catch (ignore: ExecutionException) {}
-                catch (ignore: CancellationException) {}
-            } catch(ignore: InterruptedException) {}
-        }
+                this.get()
+            }
+            catch (ignore: ExecutionException) {}
+            catch (ignore: CancellationException) {}
+        } catch(ignore: InterruptedException) {}
     }
 }
 

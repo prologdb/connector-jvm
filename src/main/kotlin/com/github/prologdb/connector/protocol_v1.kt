@@ -14,7 +14,6 @@ import com.github.prologdb.runtime.unification.VariableBucket
 import com.google.protobuf.ByteString
 import java.io.DataOutput
 import java.io.DataOutputStream
-import java.lang.UnsupportedOperationException
 import java.nio.channels.AsynchronousByteChannel
 import java.util.*
 import java.util.concurrent.Callable
@@ -166,6 +165,7 @@ internal class ProtocolV1PrologDBConnection(
             ToClient.EventCase.QUERY_CLOSED -> {
                 val queryId = message.queryClosed!!.queryId
                 currentlyOpenQueries[queryId]?.onEvent(QueryClosedEvent())
+                currentlyOpenQueries.remove(queryId)
             }
             ToClient.EventCase.SOLUTION -> {
                 val queryId = message.solution!!.queryId
@@ -180,13 +180,13 @@ internal class ProtocolV1PrologDBConnection(
                 System.err.println(message.serverError!!)
                 TODO()
             }
-            ToClient.EventCase.GOODBYE -> TODO()
+            ToClient.EventCase.GOODBYE -> if (!closed) close(false)
             ToClient.EventCase.EVENT_NOT_SET -> TODO()
         }
     }
 
     private fun onServerReadError(error: Throwable) {
-        error.printStackTrace(System.err)
+        error.printStackTrace()
         TODO()
     }
 
@@ -286,6 +286,16 @@ internal class ProtocolV1PrologDBConnection(
             ))
         }
 
+        fun requestAllRemainingSolutions(doReturn: Boolean) {
+            messagesToWorker.put(MessageToWorker.RequestSolutions(QuerySolutionConsumption.newBuilder()
+                .setQueryId(queryId)
+                .setCloseAfterwards(true)
+                .setHandling(if (doReturn) QuerySolutionConsumption.PostConsumptionAction.RETURN else QuerySolutionConsumption.PostConsumptionAction.DISCARD)
+                .clearAmount()
+                .build()
+            ))
+        }
+
         fun closeQuery() {
             messagesToWorker.put(MessageToWorker.CloseQuery(queryId))
         }
@@ -363,6 +373,12 @@ private class QueryHandleImpl(
         if (closed) throw QueryClosedException("This query is already closed.")
 
         talkback.requestSolutions(amount, closeAfterConsumption, doReturn)
+    }
+
+    override fun requestAllRemainingSolutions(doReturn: Boolean) {
+        if (closed) throw QueryClosedException("This query is already closed.")
+
+        talkback.requestAllRemainingSolutions(doReturn)
     }
 }
 

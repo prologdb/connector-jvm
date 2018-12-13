@@ -111,6 +111,7 @@ internal class ProtocolV1PrologDBConnection(
             }
             catch (ex: Throwable) {
                 onStopped.completeExceptionally(ex)
+                throw ex
             }
         }
 
@@ -134,7 +135,10 @@ internal class ProtocolV1PrologDBConnection(
         }
 
         private fun requestSolutions(msg: MessageToWorker.RequestSolutions) {
-            outQueue.queue(msg.request)
+            outQueue.queue(ToServer.newBuilder()
+                .setConsumeResults(msg.request)
+                .build()
+            )
         }
 
         private fun closeQuery(msg: MessageToWorker.CloseQuery) {
@@ -172,13 +176,17 @@ internal class ProtocolV1PrologDBConnection(
                 val error = message.queryError!!.toThrowable()
                 currentlyOpenQueries[queryId]?.onEvent(QueryErrorEvent(error))
             }
-            ToClient.EventCase.SERVER_ERROR -> TODO()
+            ToClient.EventCase.SERVER_ERROR -> {
+                System.err.println(message.serverError!!)
+                TODO()
+            }
             ToClient.EventCase.GOODBYE -> TODO()
             ToClient.EventCase.EVENT_NOT_SET -> TODO()
         }
     }
 
     private fun onServerReadError(error: Throwable) {
+        error.printStackTrace(System.err)
         TODO()
     }
 
